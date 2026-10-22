@@ -434,19 +434,60 @@ def _adjusted_default_prob(
     return float(adjusted)
 
 
-def _load_or_train_model() -> Tuple[GradientBoostingClassifier, list, float, float]:
-    """Load cached model from disk, or train and cache it."""
-    if (
+def _try_load_cache():
+    """Return (model, features, approve_cut, refer_cut) if the cache is valid."""
+    if not (
         os.path.exists(MODEL_PATH)
         and os.path.exists(FEATURES_PATH)
         and os.path.exists(CALIBRATION_PATH)
     ):
+        return None
+    try:
         model = joblib.load(MODEL_PATH)
         features = joblib.load(FEATURES_PATH)
         approve_cut, refer_cut = joblib.load(CALIBRATION_PATH)
+        approve_cut = float(approve_cut)
+        refer_cut = float(refer_cut)
+        _validate_cached_model(model)
         return model, features, approve_cut, refer_cut
+    except Exception:
+        _flush_cache()
+        return None
 
-    print("[ml_engine] No cached model — training from Hugging Face data (one-time cost).")
+
+def _flush_cache() -> None:
+    for path in (MODEL_PATH, FEATURES_PATH, CALIBRATION_PATH):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+
+
+def _validate_cached_model(model):
+    if model is None:
+        raise ValueError("cached model is empty")
+    fitted = getattr(model, "feature_names_in_", None)
+    if fitted is not None and list(fitted) != list(MODEL_FEATURES):
+        raise ValueError(
+            f"cached model feature names {list(fitted)} != {MODEL_FEATURES}"
+        )
+
+
+def _load_or_train_model() -> Tuple[GradientBoostingClassifier, list, float, float]:
+    """Load the cached model, or train and cache it.
+
+    The cache is trusted only loosely: if it is missing, corrupt, or
+    incompatible with the installed sklearn (e.g. a model saved under a
+    different version, which fails to unpickle), we flush it and rebuild from
+    Hugging Face data instead of crashing the app.
+    """
+    cached = _try_load_cache()
+    if cached is not None:
+        _model, _features, _prob_approve, _prob_refer = cached
+        print(f"[ml_engine] Loaded cached model from {MODEL_PATH}")
+        return _model, _features, _prob_approve, _prob_refer
+
+    print("[ml_engine] No usable cached model — training from Hugging Face data (one-time cost).")
     model, features = _train_model()
     approve_cut, refer_cut = _calibrate_thresholds(model, features)
     joblib.dump(model, MODEL_PATH)
