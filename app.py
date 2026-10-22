@@ -875,6 +875,21 @@ elif page == "Consistency":
     c_run, c_meta = st.columns([1, 2])
     with c_run:
         n_para = st.slider("Paraphrases", 3, 8, 5, key="slider_para")
+        if st.button("Find flip-prone applicant", key="btn_flip_prone", type="secondary"):
+            # Regression tripwire: scan the synthetic population for an
+            # applicant whose decision flips across trade wordings. If found,
+            # swap to it and run the consistency test on that case.
+            app2, rep2 = find_flip_prone_applicant()
+            if app2 is not None:
+                st.session_state.applicant = app2
+                st.session_state.report = rep2
+                st.success(
+                    f"Switched to {app2.business_name} ({app2.trade}) — "
+                    f"{rep2.flip_count} of {rep2.total_paraphrases} paraphrases flipped."
+                )
+            else:
+                st.info("No flip-prone applicant found. The synthetic population is stable (flip rate 0%).")
+            st.rerun()
         if st.button("Run consistency test", key="btn_consistency", type="primary"):
             st.session_state.report = run_consistency_test(
                 app, n_paraphrases=n_para, seed=7
